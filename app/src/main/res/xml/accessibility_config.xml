@@ -1,0 +1,11 @@
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackAllMask"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_description"
+    />
+
+<!-- https://developer.android.com/reference/android/accessibilityservice/AccessibilityServiceInfo.html -->

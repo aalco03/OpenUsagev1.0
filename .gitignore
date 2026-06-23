@@ -1,0 +1,56 @@
+*.iml
+.gradle
+/.idea/caches/build_file_checksums.ser
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+
+# Databases and backups
+*.db
+*.db-shm
+*.db-wal
+backups/
+
+# Exports and generated reports
+exports/
+*.xlsx
+*.html
+
+# Media files
+*.mp4
+*.avi
+*.mov
+
+# Credentials (NEVER commit these)
+firebase_credentials.json
+gdp-b-platform-*.json
+google_credentials.json
+*-credentials.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Signing
+keystore.properties
+*.keystore
+*.jks
+
+# Local configuration
+local.properties
+
+# Build outputs
+app/release/
+*.apk
+*.aab
+
+# Google services
+google-services.json
+
+# Internal tooling (not for public release)
+tools/

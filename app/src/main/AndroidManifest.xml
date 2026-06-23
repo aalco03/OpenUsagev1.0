@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.CAPTURE_VIDEO_OUTPUT" />
+    <uses-permission android:name="android:project_media"/>
+
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.PREVENT_POWER_KEY" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.GET_TASKS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.SENSOR_ACCELEROMETER" />
+    <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Health Connect: read step history (PASSIVE group, best-effort) -->
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_HISTORY" />
+
+    <!-- Health Connect client requires minSdk 26; app supports 23. HC code is guarded
+         behind Build.VERSION.SDK_INT >= 26 so older devices never load HC classes. -->
+    <uses-sdk tools:overrideLibrary="androidx.health.connect.client" />
+
+    <!-- Package visibility: needed to detect/launch the Health Connect app on Android 8-13 -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+        <intent>
+            <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".ScreenomicsApplication"
+        android:allowBackup="true"
+        android:icon="@drawable/logo_open_usage"
+        android:label="@string/app_name"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
+        android:configChanges="colorMode|density|fontScale|fontWeightAdjustment|grammaticalGender|keyboard|keyboardHidden|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+        android:roundIcon="@drawable/logo_open_usage"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <activity
+            android:name=".PermissionScreens.PermissionParentActivity"
+            android:screenOrientation="portrait"
+            android:exported="false" />
+        <activity android:name=".UsagePermissionActivity"
+            android:screenOrientation="portrait" /> <!-- <activity android:name=".CrashReportActivity" /> -->
+        <activity
+            android:name=".Activity.EntryActivity"
+            android:screenOrientation="portrait"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".Activity.AppRunningActivity"
+            android:screenOrientation="portrait" />
+
+        <!-- Health Connect privacy-policy rationale screen (mandatory for HC permissions).
+             Handles both the Android 13- rationale action and the Android 14+ usage intent. -->
+        <activity
+            android:name=".Activity.HealthPrivacyPolicyActivity"
+            android:screenOrientation="portrait"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".Activity.LoginActivity"
+            android:screenOrientation="portrait"
+            android:label="@string/title_activity_login" />
+        <activity android:name=".CapturePermissionActivity"
+            android:screenOrientation="portrait" />
+
+
+        <activity
+            android:name=".Activity.ScreenOnActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen"
+            android:excludeFromRecents="true"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleTask" />
+
+        <receiver android:name=".battery.BatteryStatusCapture"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BATTERY_LOW"/>
+                <action android:name="android.intent.action.BATTERY_OKAY"/>
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED"/>
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED"/>
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".Services.ScreenMonitorService"
+            android:enabled="true"
+            android:permission="android.permission.FOREGROUND_SERVICE"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
+        <receiver android:name=".apps.ScreenOnOffStatusCapture"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SCREEN_ON" />
+                <action android:name="android.intent.action.SCREEN_OFF" />
+                <action android:name="android.intent.action.USER_PRESENT" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".Services.CaptureUploadService"
+            android:configChanges="colorMode|density|fontScale|fontWeightAdjustment|grammaticalGender|keyboard|keyboardHidden|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.FOREGROUND_SERVICE"
+            android:foregroundServiceType="mediaProjection|dataSync" />
+
+        <receiver
+            android:name=".Alarm.BroadcastReceiverForAlarm"
+            android:enabled="true"
+            android:exported="true" />
+        <receiver
+            android:name=".network.NetworkStatusCapture"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
+                <action android:name="android.net.wifi.WIFI_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".Services.AutostartService"
+            android:enabled="true"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <activity
+            android:name=".Activity.CaptureUploadStarter"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Transparent" />
+
+        <service
+            android:name=".Alarm.SeekForNotification"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".Services.ScreenomicsAccessService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+    </application>
+
+</manifest>

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- App Name Configuration -->
+    <string name="app_name">
+        Stanford Screenomics
+    </string>
+
+    <!-- Password Configuration -->
+    <string name="password_restriction">
+        0ldPassword!
+    </string>
+
+    <!-- Cloud Storage URL Configuration -->
+    <string name="cloud_storage_url">
+        gs://gdp-b-participant-logs.firebasestorage.app
+    </string>
+
+    <!-- Consent Form Configuration -->
+    <string name="consent_welcome">
+        Research Study Consent Form
+    </string>
+    <string name="consent_subtitle">
+        Stanford University Mobile Device Usage Study
+    </string>
+    <string name="consent_intro">
+        You are invited to participate in a research study being conducted at Stanford University. The purpose of this study is to examine how people use their mobile devices for online activities and to better understand mobile browsing patterns and app usage behaviors.
+    </string>
+    <string name="consent_section_heading1">
+        What Will Happen
+    </string>
+    <string name="consent_section_text1">
+        If you agree to participate, we will track your online behavior on your mobile phone for approximately 7 days. This tracking will include the websites you visit, the apps you use and how much time you spend in each app, and your general browsing patterns. Your participation will require minimal active involvement on your part, as the data collection will happen passively in the background.
+    </string>
+    <string name="consent_section_heading2">
+        Voluntary Participation
+    </string>
+    <string name="consent_section_text2">
+        Your participation in this study is entirely voluntary. You are free to decline to participate, and if you do choose to participate, you may withdraw at any time without penalty or loss of benefits to which you are otherwise entitled.
+    </string>
+    <string name="consent_section_heading3">
+        Privacy and Data Security
+    </string>
+    <string name="consent_section_text3">
+        All data collected in this study will be completely anonymous, meaning that no personally identifiable information will be collected or linked to your data. The information gathered will be encrypted and stored securely, used only for research purposes, and reported only in aggregate form to ensure your privacy is protected.
+    </string>
+    <string name="consent_section_heading4">
+        Risks and Benefits
+    </string>
+    <string name="consent_section_text4">
+        The risks associated with participating in this study are minimal. While there is no direct benefit to you personally, your participation may contribute valuable insights to our understanding of digital behavior that could benefit society more broadly.
+    </string>
+    <string name="consent_closing">
+        If you have any questions or concerns about this study, please contact José Ramón Enríquez (jreg@stanford.edu). For questions about your rights as a research participant, you may contact the Stanford University Institutional Review Board at irbnonmed@stanford.edu.
+    </string>
+    <string name="consent_agreement">
+        By proceeding, you acknowledge that you are at least 18 years old, have read and understood this consent form, and voluntarily agree to participate in this research study.
+    </string>
+
+</resources>
+

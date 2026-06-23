@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="usage_permission_header">Usage Data Access</string>
+    <string name="physical_permission_header">Physical Activity Access Permission</string>
+    <string name="read_notification_permission_header">Read Notification Permission</string>
+    <string name="accessibility_permission_header">Accessibility Service Permission</string>
+    <string name="notification_permission_header">Read Notification Permission</string>
+    <string name="allowed">Allowed</string>
+    <string name="do_not_allow_note">The permission is required for Open Usage study participation.</string>
+    <string name="menu_zlogout">Log Out</string>
+    <string name="noti_text">App is running in the background.</string>
+    <string name="noti_title">Open Usage Active</string>
+</resources>

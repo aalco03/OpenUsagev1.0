@@ -1,0 +1,95 @@
+<resources>
+    <string name="app_name">Open Usage</string>
+    <string name="title_activity_login">Sign in</string>
+
+    <!-- LoginActivity strings -->
+    <string name="prompt_code">Participant ID</string>
+    <string name="prompt_email">Email</string>
+    <string name="prompt_password">Password</string>
+    <string name="action_sign_in">Begin Study</string>
+    <string name="action_register">Register</string>
+    <string name="prompt_age_range">Age Range</string>
+    <string name="prompt_gender">Gender</string>
+    <string name="prompt_location">Location</string>
+    <string name="prompt_income_level">Income Level</string>
+    <string name="prompt_usage_level">Self-Reported Usage</string>
+    <string name="error_invalid_email">This email address is invalid</string>
+    <string name="error_invalid_password">This password is invalid</string>
+    <string name="error_incorrect_password">This password is incorrect</string>
+    <string name="error_field_required">This field is required</string>
+    <string name="error_loading_settings">Failed to load user settings. Try logging in again.</string>
+    <string name="login_prompt_title">Welcome!</string>
+    <string name="login_prompt_instructions">Please enter your study information and demographic details to begin.</string>
+    <string name="login_prompt_privacy">By participating you agree to our Privacy Policy.</string>
+
+    <!-- UsagePermissionActivity strings -->
+    <string name="up_prompt_title">You are logged in!</string>
+    <string name="up_prompt_instructions">Before we can get started, we need you to grant us permission
+        to gather some basic phone usage statistics. Swipe through the images below to see how to do it, then
+        hit the \"Open Settings Menu\" button.</string>
+    <string name="up_button_usage">Open Settings Menu</string>
+    <string name="up_button_whatis">What is this permission?</string>
+    <string name="up_whatis_title">What are usage statistics?</string>
+    <string name="up_whatis_text">This permission enables us to collect basic anonymous data about
+        the way you use your phone. In our case, we use this permission to monitor what app you
+        are using at a given time (for example, \"Email\" or \"Maps\").</string>
+
+    <!-- CapturePermissionActivity strings -->
+    <string name="cp_prompt_title">Almost ready to go!</string>
+    <string name="cp_prompt_permission">Press \'Begin Screen Capture\' to get started. We will request a few more permissions afterward.</string>
+    <string name="cp_button_start">Begin Screen Capture</string>
+    <string name="cp_button_loading">Loading...</string>
+    <string name="cp_toast_nostart">Unable to start screen capture. Please check that screen recording permissions are enabled.</string>
+
+    <!-- AppRunningActivity strings -->
+    <string name="ar_prompt_title">Open Usage active.</string>
+    <string name="ar_prompt_description">App is active in the background. You can safely close this window.</string>
+    <string name="noti_title">Open Usage active.</string>
+    <string name="noti_text">App is active in the background.</string>
+
+    <!-- CrashReportActivity strings -->
+    <string name="cr_prompt_title">Open Usage crashed!</string>
+    <string name="cr_prompt_description">If you have internet access, please press the button below to upload a log of the crash. This information will assist us in diagnosing the issue and ensuring it does not recur.</string>
+    <string name="cr_button_upload">Upload Crash Log</string>
+    <string name="cr_button_uploadlater">Upload Later</string>
+    <string name="cr_toast_complete">Log uploaded successfully. Thank you.</string>
+    <string name="cr_toast_fail">An error occurred while uploading the log. Please try again later.</string>
+
+    <!-- CaptureUploadService strings -->
+    <string name="cus_toast_mediastop">Open Usage screen capture has stopped unexpectedly. Please restart the app.</string>
+
+    <!-- ImageUploader strings -->
+    <string name="iu_toast_loginfailure">Open Usage has been disconnected from your user account. Please log in again.</string>
+
+    <!-- Menu strings -->
+    <string name="menu_dumplog">Dump Debug Log</string>
+    <string name="open_by_notification">OPEN BY NOTIFICATION</string>
+    <string name="menu_logout">Log Out</string>
+    <string name="toast_dumplog_success">Log successfully dumped; upload in progress!</string>
+    <string name="toast_dumplog_fail">Log dump failed. Maybe try again later?</string>
+    <string name="location_permission_header">Location Access Permission</string>
+    <string name="usage_permission_header">Usage Data Access</string>
+    <string name="usage_permission_description">Open Usage needs your permission to access usage data to track what other apps you are using and how often to understand how people use smartphones in daily life.\n\nThe permission is required for Open Usage study participation with your explicit consent and must be activated manually. By tapping the "Allow" button below, you agree that this app collects your usage data. The data is collected only when the app is in use. If you do not agree, please tap "Deny" and discontinue use of the app.\n\n𝐈𝐦𝐩𝐨𝐫𝐭𝐚𝐧𝐭: The collected data will only be used for study research purposes and will not be shared with any third-parties. The app does not collect any personal information to identify your data file, and the data will be encrypted and stored on a secure server that will not be accessible to anyone outside of our research project\n.</string>
+    <string name="accessibility_permission_header">Accessibility Service Permission</string>
+    <string name="media_projection_permission_description">We request Media Projection Permission to collect the information that is visible on your screen or played from your device while recording or casting to understand how people use smartphone in daily life. This includes information such as passwords, payment details, photos, messages, and audio that you play.\n\nThe permission is required for Open Usage study participation with your explicit consent and must be activated manually. By tapping the “Allow” button below, you agree that this app collects your precise location data. The data is collected only when the smartphone is in use. If you do not agree, please tap “Deny” and discontinue use of the app.\n\n𝐈𝐦𝐩𝐨𝐫𝐭𝐚𝐧𝐭: The collected data will only be used for study research purposes and will not be shared with any third-parties. The app does not collect any personal information to identify your data file, and the data will be encrypted and stored on a secure server that will not be accessible to anyone outside of our research project.\n</string>
+    <string name="media_projection_permission_header">Media Projection Permission</string>
+    <string name="physical_permission_header">Physical Activity Access Permission</string>
+    <string name="physical_permission_description">We request Physical Activity Access Permission to collect your step count data to understand how people use smartphones in daily life.\n\nAllow Open Usage to access your physical activity? </string>
+    <string name="accessibility_permission_description">We request Accessibility Permission to collect your interaction gesture data with your smartphone (i.e., tap, swipe, and scroll events) to understand how people use smartphones in daily life.\n\nThe permission is required for Open Usage study participation with your explicit consent and must be activated manually. By tapping the “Allow” button below, you agree that this app collects your interaction gesture data. The data is collected only when the app is in use. If you do not agree, please tap “Deny” and discontinue use of the app.\n\n𝐈𝐦𝐩𝐨𝐫𝐭𝐚𝐧𝐭: The collected data will only be used for study research purposes and will not be shared with any third-parties. The app does not collect any personal information to identify your data file, and the data will be encrypted and stored on a secure server that will not be accessible to anyone outside of our research project.</string>
+    <string name="notification_permission_description">Open Usage needs your permission to send push notifications to keep you up to date with the study requirements and procedures you follow.\n\nAllow Open Usage to send you notifications? </string>
+    <string name="notification_permission_header">Push Notification Permission</string>
+    <string name="do_not_allow_note">The permission is required for Open Usage study participation.</string>
+    <string name="read_notification_permission_header">Read Notification Permission</string>
+    <string name="read_notification_permission_description">Open Usage needs your permission to read notifications to keep you up to date with the study requirements and procedures you follow.\n\nAllow Open Usage to read notifications?</string>
+    <string name="location_access_permission_description">We request Location Access Permission to collect your real-time location data of your device to understand how people use smartphone in daily life.\n\nThe permission is required for Open Usage study participation with your explicit consent and must be activated manually. By tapping the "Allow" button below, you agree that this app collects your precise location data. The data is continuously collected when the app is not in use. If you do not agree, please tap "Deny" and discontinue use of the app.\n\n𝐈𝐦𝐩𝐨𝐫𝐭𝐚𝐧𝐭: The collected data will only be used for study research purposes and will not be shared with any third-parties. The app does not collect any personal information to identify your data file, and the data will be encrypted and stored on a secure server that will not be accessible to anyone outside of our research project.\n</string>
+    <string name="accessibility_description">Accessibility service used by Open Usage. To enable, tap the toggle switch in the upper right corner then press OK on the next screen. Press the back button twice to return to Open Usage.</string>
+    <string name="accessibility_service_label" />
+    <string name="service_is_not_running">App is not running.</string>
+    <string name="app_is_not_running_please_turn_on_the_above_button_to_start_the_app">Screen capture is paused. Press the button above to resume.</string>
+
+    <!-- TODO: Remove or change this placeholder text -->
+    <string name="hello_blank_fragment">Hello blank fragment</string>
+    <string name="start">Start</string>
+    <string name="allowed">Allowed</string>
+    <string name="open_setting">Open setting</string>
+</resources>
