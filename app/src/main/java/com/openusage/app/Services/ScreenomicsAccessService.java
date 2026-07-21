@@ -29,6 +29,10 @@ import com.openusage.app.TextBasedEventData.EventDatabaseHelper;
 import com.openusage.app.TextBasedEventData.SessionManager;
 import com.openusage.app.TextBasedEventData.TextSimilarityCalculator;
 import com.openusage.app.TextBasedEventData.UITextExtractionManager;
+import com.openusage.app.policy.PolicyAuditLogger;
+import com.openusage.app.policy.PolicyConfigManager;
+import com.openusage.app.policy.PolicyVerdict;
+import com.openusage.app.policy.SensitiveContentPolicy;
 
 /**
  * ScreenomicsAccessService - Accessibility service for UI text extraction.
@@ -65,13 +69,20 @@ public class ScreenomicsAccessService extends AccessibilityService {
     private long lastFallbackScreenshotTime = 0;
     private static final float MAX_NO_TEXT_RATIO = 0.4f; // 40%
     private static final int MIN_MEANINGFUL_TEXT_LENGTH = 100; // Fallback screenshot if text below this
-    private static final String PREF_FALLBACK_COUNT = "fallback_screenshot_count";
-    private static final String PREF_FALLBACK_DATE = "fallback_screenshot_date";
-    private static final int MAX_DAILY_FALLBACK = 100;
+    // NOTE: The daily fallback cap (MAX_DAILY_FALLBACK / canTriggerFallbackToday) was a
+    // testing-phase artifact and has been removed. Screenshot volume is now bounded by the
+    // risk-tier router (Gate 3) rather than a hard daily count.
     
     // Text similarity deduplication settings
     private static final double SIMILARITY_THRESHOLD = 0.90; // 90% similar = skip storage
     private double lastSimilarityScore = 0.0;
+
+    // Sensitive-content policy (Gate 1: text redaction/suppression + fallback veto)
+    private SensitiveContentPolicy sensitivePolicy;
+    // Policy signals collected during the most recent node traversal (password/resource-ids).
+    private SensitiveContentPolicy.EvalContext lastEvalContext;
+    // Verdict from the most recent text evaluation; used to veto the fallback screenshot trigger.
+    private PolicyVerdict lastPolicyVerdict = PolicyVerdict.allow();
 
     public ScreenomicsAccessService() {
     }
@@ -120,7 +131,12 @@ public class ScreenomicsAccessService extends AccessibilityService {
             sessionManager = new SessionManager(this);
             textExtractionManager = UITextExtractionManager.getInstance(this);
             textExtractionManager.setSessionManager(sessionManager);
-            
+
+            // Initialize sensitive-content policy (Gate 1) and begin listening for remote rules
+            PolicyConfigManager policyConfig = PolicyConfigManager.getInstance(this);
+            policyConfig.startListening();
+            sensitivePolicy = policyConfig.getPolicy();
+
             // Start user session
             LogInPreference loginPref = new LogInPreference(this);
             String userId = loginPref.GetUserSubjId();
@@ -242,7 +258,32 @@ public class ScreenomicsAccessService extends AccessibilityService {
             
             Log.d(TAG, "Text extraction result: " + 
                   (extractedText != null ? extractedText.length() + " characters" : "null"));
-            
+
+            // ========== GATE 1: SENSITIVE-CONTENT POLICY ==========
+            // Evaluate the extraction (plus node-metadata signals) before any storage.
+            // SUPPRESS -> drop entirely; REDACT -> replace matched spans in stored text.
+            lastPolicyVerdict = PolicyVerdict.allow();
+            if (sensitivePolicy != null && extractedText != null) {
+                String policyPackage = getCurrentAppPackageName();
+                PolicyVerdict verdict = sensitivePolicy.evaluateText(
+                        extractedText, policyPackage, lastEvalContext);
+                lastPolicyVerdict = verdict;
+
+                if (verdict.isSuppress()) {
+                    PolicyAuditLogger.log(this, "text", policyPackage, verdict);
+                    Log.i(TAG, "Gate 1 SUPPRESS - dropping extraction for " + policyPackage
+                            + " (" + verdict.reason + ")");
+                    lastExtractedText = ""; // don't let suppressed content seed dedup
+                    currentRoot.recycle();
+                    return;
+                } else if (verdict.isRedact()) {
+                    PolicyAuditLogger.log(this, "text", policyPackage, verdict);
+                    extractedText = SensitiveContentPolicy.applyRedaction(extractedText, verdict.spans);
+                    Log.i(TAG, "Gate 1 REDACT - redacted " + verdict.spans.size()
+                            + " span(s) for " + policyPackage);
+                }
+            }
+
             // Similarity-based deduplication: skip storage when content is largely unchanged
             double similarity = 0.0;
             if (lastExtractedText != null && !lastExtractedText.isEmpty() && extractedText != null) {
@@ -358,14 +399,21 @@ public class ScreenomicsAccessService extends AccessibilityService {
     }
 
     /**
-     * Extract text from accessibility node hierarchy
+     * Extract text from accessibility node hierarchy.
+     *
+     * <p>While traversing, non-content policy signals (password fields, resource-id names)
+     * are collected into {@link #lastEvalContext} at zero extra passes. These let Gate 1
+     * catch cases where the visible text is insufficient but node metadata still reveals a
+     * sensitive context (e.g. a banking screen rendered as UI components).
      */
     private String extractTextFromNode(AccessibilityNodeInfo node) {
         if (node == null) return null;
-        
+
         try {
             StringWriter stringWriter = new StringWriter();
-            writeNodeComponent(stringWriter, node);
+            SensitiveContentPolicy.EvalContext ctx = new SensitiveContentPolicy.EvalContext();
+            writeNodeComponent(stringWriter, node, ctx);
+            lastEvalContext = ctx;
             return stringWriter.toString();
         } catch (Exception e) {
             Log.e(TAG, "Error extracting text from node: " + e.getMessage());
@@ -374,9 +422,11 @@ public class ScreenomicsAccessService extends AccessibilityService {
     }
 
     /**
-     * Helper method to write node text content (similar to writeWindowComponent but for StringWriter)
+     * Helper method to write node text content (similar to writeWindowComponent but for StringWriter).
+     * Also fuses collection of policy signals (password flags, resource-id names) into the same pass.
      */
-    private void writeNodeComponent(StringWriter writer, AccessibilityNodeInfo component) throws IOException {
+    private void writeNodeComponent(StringWriter writer, AccessibilityNodeInfo component,
+                                    SensitiveContentPolicy.EvalContext ctx) throws IOException {
         if (writer != null && component != null) {
             // Write the text of this component (skip empty nodes to avoid
             // polluting cosine similarity with "(No text)" boilerplate)
@@ -387,11 +437,32 @@ public class ScreenomicsAccessService extends AccessibilityService {
                 writer.write(component.getContentDescription().toString() + "\n\n");
             }
 
+            // Collect non-content policy signals (fused into the existing traversal).
+            if (ctx != null) {
+                try {
+                    if (component.isPassword()) {
+                        ctx.hasPasswordField = true;
+                    }
+                    String resId = component.getViewIdResourceName();
+                    if (!TextUtils.isEmpty(resId)) {
+                        // Use only the id portion after ':id/' to reduce noise.
+                        int slash = resId.lastIndexOf('/');
+                        ctx.addToken(slash >= 0 ? resId.substring(slash + 1) : resId);
+                    }
+                    CharSequence cd = component.getContentDescription();
+                    if (!TextUtils.isEmpty(cd)) {
+                        ctx.addToken(cd.toString());
+                    }
+                } catch (Exception ignored) {
+                    // Node metadata is best-effort; never fail extraction over it.
+                }
+            }
+
             // Recursively write component's children
             for (int i = 0; i < component.getChildCount(); i++) {
                 AccessibilityNodeInfo child = component.getChild(i);
                 if (child != null && child != component) {
-                    writeNodeComponent(writer, child);
+                    writeNodeComponent(writer, child, ctx);
                     child.recycle(); // Important: recycle child nodes
                 }
             }
@@ -584,29 +655,6 @@ public class ScreenomicsAccessService extends AccessibilityService {
     }
     
     /**
-     * Check if we can trigger fallback screenshot today (under daily limit)
-     */
-    private boolean canTriggerFallbackToday() {
-        android.content.SharedPreferences prefs = getSharedPreferences("screenomics_fallback", MODE_PRIVATE);
-        
-        String today = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-            .format(new java.util.Date());
-        
-        String lastDate = prefs.getString(PREF_FALLBACK_DATE, "");
-        int count = prefs.getInt(PREF_FALLBACK_COUNT, 0);
-        
-        if (!today.equals(lastDate)) {
-            prefs.edit()
-                .putString(PREF_FALLBACK_DATE, today)
-                .putInt(PREF_FALLBACK_COUNT, 0)
-                .apply();
-            return true;
-        }
-        
-        return count < MAX_DAILY_FALLBACK;
-    }
-    
-    /**
      * Trigger fallback screenshot via broadcast
      */
     private void triggerFallbackScreenshot(String reason, String appPackage, String sessionId) {
@@ -614,15 +662,28 @@ public class ScreenomicsAccessService extends AccessibilityService {
         if (SettingsManager.val("screenshots-enabled") != 1) {
             return;
         }
-        
-        long currentTime = System.currentTimeMillis();
-        
-        // Check daily limit
-        if (!canTriggerFallbackToday()) {
-            Log.w(TAG, "Fallback screenshot skipped - daily limit reached");
-            return;
+
+        // ========== GATE 1: SENSITIVE-CONTENT VETO ==========
+        // If the most recent text evaluation flagged this screen (via content or node
+        // metadata such as password fields / resource ids), do NOT capture a fallback
+        // screenshot of it. This covers the "banking app rendered as UI components" case
+        // where visible text is insufficient but the context is clearly sensitive.
+        if (sensitivePolicy != null) {
+            if (lastPolicyVerdict != null && !lastPolicyVerdict.isAllow()) {
+                PolicyAuditLogger.log(this, "trigger", appPackage, lastPolicyVerdict);
+                Log.i(TAG, "Fallback screenshot vetoed by policy (" + lastPolicyVerdict.reason + ")");
+                return;
+            }
+            PolicyVerdict captureVerdict = sensitivePolicy.evaluateCapture(appPackage);
+            if (captureVerdict.isSuppress()) {
+                PolicyAuditLogger.log(this, "trigger", appPackage, captureVerdict);
+                Log.i(TAG, "Fallback screenshot vetoed - suppressed package " + appPackage);
+                return;
+            }
         }
-        
+
+        long currentTime = System.currentTimeMillis();
+
         // Sync with text extraction interval (5 seconds)
         if (currentTime - lastFallbackScreenshotTime < MIN_EXTRACTION_INTERVAL) {
             Log.d(TAG, "Fallback screenshot rate limited (last: " + 
@@ -647,13 +708,8 @@ public class ScreenomicsAccessService extends AccessibilityService {
         
         // Update tracking
         lastFallbackScreenshotTime = currentTime;
-        
-        // Increment daily counter
-        android.content.SharedPreferences prefs = getSharedPreferences("screenomics_fallback", MODE_PRIVATE);
-        int count = prefs.getInt(PREF_FALLBACK_COUNT, 0);
-        prefs.edit().putInt(PREF_FALLBACK_COUNT, count + 1).apply();
-        
-        Log.d(TAG, "Fallback screenshot broadcast sent (daily count: " + (count + 1) + ")");
+
+        Log.d(TAG, "Fallback screenshot broadcast sent (reason: " + reason + ")");
     }
 
     /**

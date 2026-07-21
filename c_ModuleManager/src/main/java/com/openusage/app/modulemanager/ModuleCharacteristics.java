@@ -94,4 +94,8 @@ public class ModuleCharacteristics {
     public Map<String, String> getTrackingToggleCharacteristics() {
         return new ModuleCharacteristicsData("TrackingToggleEvent", "tracking-toggle", "1").toMap();
     }
+
+    public Map<String, String> getPolicySuppressionCharacteristics() {
+        return new ModuleCharacteristicsData("PolicySuppressionEvent", "policy-suppression", "0").toMap();
+    }
 }
