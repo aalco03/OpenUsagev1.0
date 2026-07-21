@@ -50,6 +50,11 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'com.karumi:dexter:6.2.3'
 
+    // On-device OCR for Tier-3 fallback screenshot classification (bundled model).
+    // Switch to 'com.google.android.gms:play-services-mlkit-text-recognition' for the
+    // unbundled (Play Services) variant to avoid the ~4 MB APK size increase.
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+
     // File Dependencies
     implementation fileTree(dir: 'libs', include: ['*.jar'])
 
