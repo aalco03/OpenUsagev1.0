@@ -31,6 +31,7 @@ import com.openusage.app.TextBasedEventData.TextSimilarityCalculator;
 import com.openusage.app.TextBasedEventData.UITextExtractionManager;
 import com.openusage.app.policy.PolicyAuditLogger;
 import com.openusage.app.policy.PolicyConfigManager;
+import com.openusage.app.policy.PolicyDumpWriter;
 import com.openusage.app.policy.PolicyVerdict;
 import com.openusage.app.policy.SensitiveContentPolicy;
 
@@ -265,6 +266,12 @@ public class ScreenomicsAccessService extends AccessibilityService {
             lastPolicyVerdict = PolicyVerdict.allow();
             if (sensitivePolicy != null && extractedText != null) {
                 String policyPackage = getCurrentAppPackageName();
+
+                // Debug-only: record raw extraction for the offline replay harness (never uploaded).
+                if (com.openusage.app.BuildConfig.DEBUG) {
+                    PolicyDumpWriter.append(this, policyPackage, extractedText);
+                }
+
                 PolicyVerdict verdict = sensitivePolicy.evaluateText(
                         extractedText, policyPackage, lastEvalContext);
                 lastPolicyVerdict = verdict;

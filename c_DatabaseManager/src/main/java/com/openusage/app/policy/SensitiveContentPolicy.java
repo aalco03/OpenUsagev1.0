@@ -34,12 +34,21 @@ public final class SensitiveContentPolicy {
     }
 
     // Scoring weights (structural >> keyword, deliberately).
-    private static final double W_STRUCTURED = 1.0;   // any checksum/shape hit
+    // Strong structural signals (card via Luhn, SSN shape, IBAN mod-97) are near-deterministic
+    // and suppress on their own. Weak structural signals (bare 9-digit ABA routing, dosage
+    // units) accidentally match common IDs/recipes, so they only contribute partial score and
+    // require corroborating context (keyword co-occurrence) to cross the suppress threshold.
+    private static final double W_STRUCTURED_STRONG = 1.0;
+    private static final double W_STRUCTURED_WEAK = 0.4;
     private static final double W_KEYWORD = 0.25;      // per distinct keyword hit
     private static final double W_PASSWORD_FIELD = 1.0;
     private static final double W_DOMAIN = 0.5;
     // Co-occurrence bonus when a keyword and a structural hit share a category.
     private static final double W_COOCCURRENCE = 0.75;
+
+    private static boolean isStrongKind(String kind) {
+        return "card".equals(kind) || "ssn".equals(kind) || "iban".equals(kind);
+    }
 
     private final StructuredDataScanner scanner = new StructuredDataScanner();
     private volatile PolicyRules rules;
@@ -87,7 +96,13 @@ public final class SensitiveContentPolicy {
 
         // Aggregate.
         Set<String> structuralCats = new LinkedHashSet<>();
-        for (StructuredDataScanner.Finding f : findings) structuralCats.add(f.category);
+        boolean hasStrongStructural = false;
+        boolean hasWeakStructural = false;
+        for (StructuredDataScanner.Finding f : findings) {
+            structuralCats.add(f.category);
+            if (isStrongKind(f.kind)) hasStrongStructural = true;
+            else hasWeakStructural = true;
+        }
 
         Set<String> keywordCats = new LinkedHashSet<>();
         Set<String> distinctKeywords = new LinkedHashSet<>();
@@ -107,8 +122,13 @@ public final class SensitiveContentPolicy {
         double score = 0.0;
         Set<String> firedCats = new LinkedHashSet<>();
 
+        if (hasStrongStructural) {
+            score += W_STRUCTURED_STRONG; // near-deterministic; suppresses on its own
+        }
+        if (hasWeakStructural) {
+            score += W_STRUCTURED_WEAK; // partial; needs corroboration to suppress
+        }
         if (!findings.isEmpty()) {
-            score += W_STRUCTURED; // structural presence is strong on its own
             firedCats.addAll(structuralCats);
         }
         // Distinct keyword contributions.
