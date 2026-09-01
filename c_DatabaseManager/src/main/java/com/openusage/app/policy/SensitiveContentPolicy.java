@@ -50,6 +50,20 @@ public final class SensitiveContentPolicy {
     // keyword for the shape to count. Keeps false positives on ordinary numbers/tokens near zero.
     private static final int CONTEXT_PROXIMITY_CHARS = 40;
 
+    // ── Diagnostic accessors ─────────────────────────────────
+    // Single source of truth for the debug harness: it must never hard-code duplicates of these,
+    // or a reported run would not reflect the build that produced it.
+
+    public static double weightStructuralStrong() { return W_STRUCTURED_STRONG; }
+    public static double weightStructuralWeak() { return W_STRUCTURED_WEAK; }
+    public static double weightKeyword() { return W_KEYWORD; }
+    public static double weightPasswordField() { return W_PASSWORD_FIELD; }
+    public static double weightDomain() { return W_DOMAIN; }
+    public static double weightCooccurrence() { return W_COOCCURRENCE; }
+
+    /** The proximity window a context-required shape is judged against. */
+    public static int contextProximityChars() { return CONTEXT_PROXIMITY_CHARS; }
+
     private static boolean isStrongKind(String kind) {
         return "card".equals(kind) || "ssn".equals(kind) || "iban".equals(kind)
                 || "mrz".equals(kind);
@@ -80,27 +94,76 @@ public final class SensitiveContentPolicy {
      * keyword matching lowercases a single normalized copy.
      */
     public PolicyVerdict evaluateText(String text, String packageName, EvalContext ctx) {
+        return evaluateText(text, packageName, ctx, null);
+    }
+
+    /**
+     * Diagnostic overload: identical decision logic, but when {@code out} is non-null every
+     * intermediate signal is recorded into it (structural findings and why each did or did not
+     * count, rejected checksum candidates, keyword hits, each score component, thresholds).
+     *
+     * <p>There is exactly one implementation of the decision logic - the other overloads delegate
+     * here with {@code null} - so a traced run and a production run can never diverge. Production
+     * callers pass {@code null} and pay only a handful of null checks.
+     */
+    public PolicyVerdict evaluateText(String text, String packageName, EvalContext ctx,
+                                      PolicyEvaluationTrace out) {
         PolicyRules r = rules;
-        if (r == null || !r.policyEnabled) return PolicyVerdict.allow();
+        if (out != null) {
+            out.text = text != null ? text : "";
+            out.length = out.text.length();
+            out.proximityWindow = CONTEXT_PROXIMITY_CHARS;
+            if (r != null) {
+                out.suppressThreshold = r.suppressScore;
+                out.redactThreshold = r.redactScore;
+            }
+            if (ctx != null) {
+                out.passwordField = ctx.hasPasswordField;
+                if (ctx.extraTokens != null) out.extraTokens.addAll(ctx.extraTokens);
+            }
+        }
+
+        if (r == null || !r.policyEnabled) {
+            if (out != null) { out.decision = "ALLOW"; out.reason = "policy_disabled"; }
+            return PolicyVerdict.allow();
+        }
 
         // Package-level unconditional suppression (Tier 1).
         if (packageName != null && r.suppressPackages.contains(packageName)) {
             Set<String> cats = new LinkedHashSet<>();
             cats.add("package");
-            return PolicyVerdict.suppress(r.suppressScore, cats, "suppress_package:" + packageName);
+            PolicyVerdict v = PolicyVerdict.suppress(
+                    r.suppressScore, cats, "suppress_package:" + packageName);
+            if (out != null) {
+                out.shortCircuit = "suppress_package";
+                out.categoriesFired.addAll(cats);
+                out.total = r.suppressScore; // score components stay zeroed: no content was scored
+                out.decision = "SUPPRESS";
+                out.reason = v.reason;
+            }
+            return v;
         }
 
         // Gallery / image-viewer block: no collection at all while browsing stored photos.
         if (packageName != null && r.blockPackages.contains(packageName)) {
             Set<String> cats = new LinkedHashSet<>();
             cats.add("gallery");
-            return PolicyVerdict.suppress(r.suppressScore, cats, "block_package:" + packageName);
+            PolicyVerdict v = PolicyVerdict.suppress(
+                    r.suppressScore, cats, "block_package:" + packageName);
+            if (out != null) {
+                out.shortCircuit = "block_package";
+                out.categoriesFired.addAll(cats);
+                out.total = r.suppressScore;
+                out.decision = "SUPPRESS";
+                out.reason = v.reason;
+            }
+            return v;
         }
 
         if (text == null) text = "";
 
         // Structural pass (on raw text - checksums are digit-based, dashes matter for SSN).
-        List<StructuredDataScanner.Finding> findings = scanner.scan(text);
+        List<StructuredDataScanner.Finding> findings = scanner.scan(text, out);
 
         // Keyword pass (on a single lowercased copy).
         String lower = text.toLowerCase();
@@ -114,14 +177,36 @@ public final class SensitiveContentPolicy {
         boolean hasStrongStructural = false;
         boolean hasWeakStructural = false;
         for (StructuredDataScanner.Finding f : findings) {
+            PolicyEvaluationTrace.FindingTrace ft = null;
+            if (out != null) {
+                ft = new PolicyEvaluationTrace.FindingTrace();
+                ft.kind = f.kind;
+                ft.category = f.category;
+                ft.start = f.start;
+                ft.end = f.end;
+                ft.contextRequired = f.contextRequired;
+                out.findings.add(ft);
+            }
+
             if (f.contextRequired) {
-                if (!hasNearbyKeyword(f, keywordMatches)) continue;
+                int gap = nearestKeywordGap(f, keywordMatches);
+                if (ft != null) ft.nearestKeywordGap = gap;
+                if (gap > CONTEXT_PROXIMITY_CHARS) {
+                    if (ft != null) {
+                        ft.counted = false;
+                        ft.dropReason = gap == PolicyEvaluationTrace.NO_KEYWORD
+                                ? "no_" + f.category + "_keyword_in_text"
+                                : "no_nearby_" + f.category + "_keyword";
+                    }
+                    continue;
+                }
                 hasWeakStructural = true;
             } else if (isStrongKind(f.kind)) {
                 hasStrongStructural = true;
             } else {
                 hasWeakStructural = true;
             }
+            if (ft != null) ft.counted = true;
             countedFindings.add(f);
             structuralCats.add(f.category);
         }
@@ -136,6 +221,10 @@ public final class SensitiveContentPolicy {
                 keywordCats.add(m.category);
             }
             distinctKeywords.add(m.category + ":" + m.keyword);
+            if (out != null) {
+                out.keywordMatches.add(new PolicyEvaluationTrace.KeywordTrace(
+                        m.keyword, m.category, m.start, m.end));
+            }
         }
 
         boolean passwordField = ctx != null && ctx.hasPasswordField;
@@ -146,9 +235,11 @@ public final class SensitiveContentPolicy {
 
         if (hasStrongStructural) {
             score += W_STRUCTURED_STRONG; // near-deterministic; suppresses on its own
+            if (out != null) out.structuralStrong = W_STRUCTURED_STRONG;
         }
         if (hasWeakStructural) {
             score += W_STRUCTURED_WEAK; // partial; needs corroboration to suppress
+            if (out != null) out.structuralWeak = W_STRUCTURED_WEAK;
         }
         if (!countedFindings.isEmpty()) {
             firedCats.addAll(structuralCats);
@@ -158,50 +249,76 @@ public final class SensitiveContentPolicy {
         if (distinctKeywordCount > 0) {
             score += W_KEYWORD * distinctKeywordCount;
             firedCats.addAll(keywordCats);
+            if (out != null) out.keywordScore = W_KEYWORD * distinctKeywordCount;
         }
         if (domainHit) {
             score += W_DOMAIN;
             firedCats.add(PolicyCategories.DOMAIN);
+            if (out != null) { out.domainScore = W_DOMAIN; out.domainHit = true; }
         }
         if (passwordField) {
             score += W_PASSWORD_FIELD;
             firedCats.add(PolicyCategories.CREDENTIALS);
+            if (out != null) out.passwordScore = W_PASSWORD_FIELD;
         }
         // Co-occurrence bonus: keyword + structural in the same category.
         for (String cat : keywordCats) {
             if (structuralCats.contains(cat)) {
                 score += W_COOCCURRENCE;
+                if (out != null) out.cooccurrenceScore = W_COOCCURRENCE;
                 break;
             }
         }
 
+        if (out != null) {
+            out.total = score;
+            out.categoriesFired.addAll(firedCats);
+        }
+
         // Decide.
         if (score >= r.suppressScore) {
-            return PolicyVerdict.suppress(score, firedCats, "suppress:" + reasonOf(firedCats));
+            PolicyVerdict v = PolicyVerdict.suppress(score, firedCats, "suppress:" + reasonOf(firedCats));
+            if (out != null) { out.decision = "SUPPRESS"; out.reason = v.reason; }
+            return v;
         }
         if (score >= r.redactScore) {
             List<PolicyVerdict.Span> spans = buildRedactionSpans(countedFindings, keywordMatches);
-            return PolicyVerdict.redact(score, firedCats, spans);
+            PolicyVerdict v = PolicyVerdict.redact(score, firedCats, spans);
+            if (out != null) { out.decision = "REDACT"; out.reason = v.reason; }
+            return v;
         }
+        if (out != null) { out.decision = "ALLOW"; out.reason = "clean"; }
         return PolicyVerdict.allow();
     }
 
     /**
-     * True if a keyword match of the same category as {@code f} lies within
-     * {@link #CONTEXT_PROXIMITY_CHARS} characters of the finding's span. Keyword match spans are
-     * in the lowercased copy, whose indices align 1:1 with the raw text used for findings.
+     * Character distance from {@code f} to the nearest same-category keyword match, or
+     * {@link PolicyEvaluationTrace#NO_KEYWORD} when the category never appears. Keyword match
+     * spans are in the lowercased copy, whose indices align 1:1 with the raw text used for
+     * findings.
+     *
+     * <p>Returns the distance rather than a boolean so the diagnostic trace can report
+     * <em>how far</em> a dropped shape was from corroboration, not just that it was dropped.
      */
-    private static boolean hasNearbyKeyword(StructuredDataScanner.Finding f,
-                                            List<AhoCorasickMatcher.Match> keywordMatches) {
+    private static int nearestKeywordGap(StructuredDataScanner.Finding f,
+                                         List<AhoCorasickMatcher.Match> keywordMatches) {
+        int best = PolicyEvaluationTrace.NO_KEYWORD;
         for (AhoCorasickMatcher.Match m : keywordMatches) {
             if (!m.category.equals(f.category)) continue;
             int gap;
             if (m.end <= f.start) gap = f.start - m.end;
             else if (f.end <= m.start) gap = m.start - f.end;
             else gap = 0; // overlapping
-            if (gap <= CONTEXT_PROXIMITY_CHARS) return true;
+            if (gap < best) best = gap;
+            if (best == 0) break;
         }
-        return false;
+        return best;
+    }
+
+    /** True if a same-category keyword lies within {@link #CONTEXT_PROXIMITY_CHARS} of {@code f}. */
+    private static boolean hasNearbyKeyword(StructuredDataScanner.Finding f,
+                                            List<AhoCorasickMatcher.Match> keywordMatches) {
+        return nearestKeywordGap(f, keywordMatches) <= CONTEXT_PROXIMITY_CHARS;
     }
 
     /**

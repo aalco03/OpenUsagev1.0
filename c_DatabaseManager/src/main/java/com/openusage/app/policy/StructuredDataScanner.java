@@ -52,6 +52,16 @@ public final class StructuredDataScanner {
      * lowercased); dosage-unit matching is case-insensitive internally.
      */
     public List<Finding> scan(String text) {
+        return scan(text, null);
+    }
+
+    /**
+     * Diagnostic overload. Identical detection behavior; when {@code out} is non-null it also
+     * records shapes that were found and then <em>rejected</em> (failed Luhn/ABA/mod-97, or an
+     * MRZ prefix with no name separator). Debug-only callers use this to tell "the shape was
+     * never seen" apart from "the shape was seen and the checksum rejected it".
+     */
+    public List<Finding> scan(String text, PolicyEvaluationTrace out) {
         List<Finding> findings = new ArrayList<>();
         if (text == null || text.isEmpty()) return findings;
 
@@ -90,15 +100,23 @@ public final class StructuredDataScanner {
                 }
 
                 // Card: 13-19 digits passing Luhn.
-                if (!matched && len >= 13 && len <= 19 && luhnValid(digitStr)) {
-                    findings.add(new Finding(PolicyCategories.FINANCIAL, "card", start, end));
-                    matched = true;
+                if (!matched && len >= 13 && len <= 19) {
+                    if (luhnValid(digitStr)) {
+                        findings.add(new Finding(PolicyCategories.FINANCIAL, "card", start, end));
+                        matched = true;
+                    } else if (out != null) {
+                        out.addRejected("card", start, end, "luhn_failed");
+                    }
                 }
 
                 // Routing: exactly 9 digits passing ABA checksum.
-                if (!matched && len == 9 && abaValid(digitStr)) {
-                    findings.add(new Finding(PolicyCategories.FINANCIAL, "routing", start, end));
-                    matched = true;
+                if (!matched && len == 9) {
+                    if (abaValid(digitStr)) {
+                        findings.add(new Finding(PolicyCategories.FINANCIAL, "routing", start, end));
+                        matched = true;
+                    } else if (out != null) {
+                        out.addRejected("routing", start, end, "aba_checksum_failed");
+                    }
                 }
 
                 // Dosage: digits immediately followed by a medical unit.
@@ -129,6 +147,14 @@ public final class StructuredDataScanner {
                         i = ibanEnd;
                         continue;
                     }
+                    // Only report a rejection for candidates that actually look like an IBAN.
+                    // The candidate scan is greedy across spaces and can start mid-word, so
+                    // without these guards ordinary prose ("...er 021000021 account number...")
+                    // would be reported as a failed IBAN - noise in the file meant to remove it.
+                    if (out != null && candidate.length() >= 15 && candidate.length() <= 34
+                            && isWordStart(text, i) && hasIbanPrefixShape(text, i)) {
+                        out.addRejected("iban", i, ibanEnd, "iban_mod97_failed");
+                    }
                 }
             }
 
@@ -136,10 +162,27 @@ public final class StructuredDataScanner {
         }
 
         // Second pass: passport MRZ lines and mixed alphanumeric gov-ID tokens.
-        scanMrz(text, findings);
+        scanMrz(text, findings, out);
         scanGovIdTokens(text, findings);
 
         return findings;
+    }
+
+    /** True if position {@code i} begins a word (nothing alphanumeric immediately before it). */
+    private static boolean isWordStart(String text, int i) {
+        return i == 0 || !Character.isLetterOrDigit(text.charAt(i - 1));
+    }
+
+    /**
+     * True if the raw text at {@code i} opens with the IBAN country+check-digit shape
+     * (2 letters then 2 digits). Checked against the raw span rather than the separator-stripped
+     * candidate, so "er 021000021..." - where the digits only line up after stripping a space -
+     * is not mistaken for an IBAN prefix.
+     */
+    private static boolean hasIbanPrefixShape(String text, int i) {
+        if (i + 4 > text.length()) return false;
+        return Character.isLetter(text.charAt(i)) && Character.isLetter(text.charAt(i + 1))
+                && Character.isDigit(text.charAt(i + 2)) && Character.isDigit(text.charAt(i + 3));
     }
 
     // ── SSN ──────────────────────────────────────────────────
@@ -167,7 +210,7 @@ public final class StructuredDataScanner {
      * letter (country code) and contains the {@code <<} name separator within one 44-char line.
      * Highly distinctive, so treated as a strong (non-context) finding.
      */
-    private static void scanMrz(String text, List<Finding> findings) {
+    private static void scanMrz(String text, List<Finding> findings, PolicyEvaluationTrace out) {
         int idx = text.indexOf("P<");
         while (idx >= 0) {
             int after = idx + 2;
@@ -175,6 +218,8 @@ public final class StructuredDataScanner {
                 int windowEnd = Math.min(text.length(), idx + 44);
                 if (text.substring(idx, windowEnd).contains("<<")) {
                     findings.add(new Finding(PolicyCategories.IDENTITY, "mrz", idx, windowEnd));
+                } else if (out != null) {
+                    out.addRejected("mrz", idx, windowEnd, "mrz_no_name_separator");
                 }
             }
             idx = text.indexOf("P<", idx + 2);
