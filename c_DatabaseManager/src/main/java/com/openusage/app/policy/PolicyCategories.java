@@ -9,6 +9,8 @@ public final class PolicyCategories {
     public static final String HEALTH = "health";
     public static final String CREDENTIALS = "credentials";
     public static final String DOMAIN = "domain";
+    // Government / identity documents: passport, visa, driver license, national/state IDs.
+    public static final String IDENTITY = "identity";
 
     private PolicyCategories() {}
 }

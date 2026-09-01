@@ -44,9 +44,10 @@ import com.openusage.app.FirebaseSettings.UtilsForFirebaseSettings;
  *   "fallback_mode": "inline",
  *   "suppress_score": 1.0,
  *   "redact_score": 0.5,
- *   "keywords": { "financial": [...], "health": [...], "credentials": [...] },
+ *   "keywords": { "financial": [...], "health": [...], "credentials": [...], "identity": [...] },
  *   "domains": [...],
  *   "suppress_packages": [...],
+ *   "block_packages": [...],
  *   "media_packages": [...]
  * }
  * </pre>
@@ -175,14 +176,24 @@ public final class PolicyConfigManager {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             PolicyRules.Builder b = new PolicyRules.Builder();
 
+            boolean hasIdentity = false;
             if (root.has("keywords") && root.get("keywords").isJsonObject()) {
                 JsonObject kw = root.getAsJsonObject("keywords");
                 for (Map.Entry<String, com.google.gson.JsonElement> e : kw.entrySet()) {
                     b.addKeywords(e.getKey(), toStringList(e.getValue()));
+                    if (PolicyCategories.IDENTITY.equalsIgnoreCase(e.getKey())) hasIdentity = true;
                 }
             }
+            // Seed the identity keyword bank from defaults when a partial remote doc omits it,
+            // so the gov-ID / SSN context corroboration is never silently disabled.
+            if (!hasIdentity) b.addKeywords(PolicyCategories.IDENTITY, PolicyDefaults.IDENTITY_KEYWORDS);
             if (root.has("domains")) b.addDomains(toStringList(root.get("domains")));
+            // Seed package lists from bundled defaults when the remote doc omits them, so a
+            // partial policy document never silently disables banking/gallery blocking.
             if (root.has("suppress_packages")) b.addSuppressPackages(toStringList(root.get("suppress_packages")));
+            else b.addSuppressPackages(PolicyDefaults.SUPPRESS_PACKAGES);
+            if (root.has("block_packages")) b.addBlockPackages(toStringList(root.get("block_packages")));
+            else b.addBlockPackages(PolicyDefaults.GALLERY_PACKAGES);
             if (root.has("media_packages")) b.addMediaPackages(toStringList(root.get("media_packages")));
 
             if (root.has("suppress_score")) b.suppressScore(root.get("suppress_score").getAsDouble());

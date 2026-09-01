@@ -60,8 +60,9 @@ public final class RiskTierRouter {
             return Tier.TIER_3_OCR; // unknown => most scrutiny
         }
 
-        // Tier 1: unconditional suppress list.
-        if (rules != null && rules.suppressPackages.contains(packageName)) {
+        // Tier 1: unconditional suppress list (banking/health + gallery block list).
+        if (rules != null && (rules.suppressPackages.contains(packageName)
+                || rules.blockPackages.contains(packageName))) {
             return Tier.TIER_1_SUPPRESS;
         }
 

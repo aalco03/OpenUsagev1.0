@@ -25,15 +25,23 @@ public final class StructuredDataScanner {
     /** A structural finding: category, the kind of detector that fired, and its span. */
     public static final class Finding {
         public final String category;
-        public final String kind; // "card", "routing", "ssn", "iban", "dosage"
+        public final String kind; // "card", "routing", "ssn", "iban", "dosage", "mrz", "govid", "ssn_bare"
         public final int start;   // inclusive
         public final int end;     // exclusive
+        // When true, the shape is ambiguous on its own (e.g. a bare gov-ID token) and only
+        // counts if a same-category keyword occurs nearby. The policy layer enforces this.
+        public final boolean contextRequired;
 
         Finding(String category, String kind, int start, int end) {
+            this(category, kind, start, end, false);
+        }
+
+        Finding(String category, String kind, int start, int end, boolean contextRequired) {
             this.category = category;
             this.kind = kind;
             this.start = start;
             this.end = end;
+            this.contextRequired = contextRequired;
         }
     }
 
@@ -100,6 +108,13 @@ public final class StructuredDataScanner {
                     matched = true;
                 }
 
+                // Bare 9-digit run (no separators): ambiguous with routing/order IDs, so it is
+                // context-required and only counts when an SSN keyword occurs nearby.
+                if (!matched && len == 9 && (end - start) == 9) {
+                    findings.add(new Finding(PolicyCategories.IDENTITY, "ssn_bare", start, end, true));
+                    matched = true;
+                }
+
                 i = Math.max(end, i + 1);
                 continue;
             }
@@ -119,25 +134,82 @@ public final class StructuredDataScanner {
 
             i++;
         }
+
+        // Second pass: passport MRZ lines and mixed alphanumeric gov-ID tokens.
+        scanMrz(text, findings);
+        scanGovIdTokens(text, findings);
+
         return findings;
     }
 
     // ── SSN ──────────────────────────────────────────────────
 
-    /** True if the span looks exactly like XXX-XX-XXXX (dashes required). */
+    /** True if the span looks exactly like XXX-XX-XXXX or XXX XX XXXX (dash or space separators). */
     private static boolean isSsnShape(String text, int start, int end) {
-        // Reconstruct the raw substring and check the dash pattern precisely.
+        // Reconstruct the raw substring and check the 3-2-4 separator pattern precisely.
         String s = text.substring(start, Math.min(end, text.length()));
         if (s.length() != 11) return false;
         for (int k = 0; k < 11; k++) {
             char ch = s.charAt(k);
             if (k == 3 || k == 6) {
-                if (ch != '-') return false;
+                if (ch != '-' && ch != ' ') return false;
             } else if (!Character.isDigit(ch)) {
                 return false;
             }
         }
         return true;
+    }
+
+    // ── Passport MRZ ─────────────────────────────────────────
+
+    /**
+     * Detects a passport machine-readable-zone line: begins with {@code P<} followed by a
+     * letter (country code) and contains the {@code <<} name separator within one 44-char line.
+     * Highly distinctive, so treated as a strong (non-context) finding.
+     */
+    private static void scanMrz(String text, List<Finding> findings) {
+        int idx = text.indexOf("P<");
+        while (idx >= 0) {
+            int after = idx + 2;
+            if (after < text.length() && Character.isLetter(text.charAt(after))) {
+                int windowEnd = Math.min(text.length(), idx + 44);
+                if (text.substring(idx, windowEnd).contains("<<")) {
+                    findings.add(new Finding(PolicyCategories.IDENTITY, "mrz", idx, windowEnd));
+                }
+            }
+            idx = text.indexOf("P<", idx + 2);
+        }
+    }
+
+    // ── Gov-ID alphanumeric token ────────────────────────────
+
+    /**
+     * Detects mixed alphanumeric tokens 6-9 chars long containing at least one letter and one
+     * digit (the general shape of passport/visa/driver-license numbers). Ambiguous on its own,
+     * so emitted as context-required: the policy only counts it near an IDENTITY keyword.
+     */
+    private static void scanGovIdTokens(String text, List<Finding> findings) {
+        int n = text.length();
+        int i = 0;
+        while (i < n) {
+            if (Character.isLetterOrDigit(text.charAt(i))) {
+                int start = i;
+                boolean hasLetter = false, hasDigit = false;
+                int j = i;
+                while (j < n && Character.isLetterOrDigit(text.charAt(j))) {
+                    if (Character.isLetter(text.charAt(j))) hasLetter = true;
+                    else hasDigit = true;
+                    j++;
+                }
+                int len = j - start;
+                if (len >= 6 && len <= 9 && hasLetter && hasDigit) {
+                    findings.add(new Finding(PolicyCategories.IDENTITY, "govid", start, j, true));
+                }
+                i = j;
+            } else {
+                i++;
+            }
+        }
     }
 
     // ── Luhn (card) ──────────────────────────────────────────

@@ -46,8 +46,13 @@ public final class SensitiveContentPolicy {
     // Co-occurrence bonus when a keyword and a structural hit share a category.
     private static final double W_COOCCURRENCE = 0.75;
 
+    // Max character gap between a context-required shape (e.g. a gov-ID token) and a same-category
+    // keyword for the shape to count. Keeps false positives on ordinary numbers/tokens near zero.
+    private static final int CONTEXT_PROXIMITY_CHARS = 40;
+
     private static boolean isStrongKind(String kind) {
-        return "card".equals(kind) || "ssn".equals(kind) || "iban".equals(kind);
+        return "card".equals(kind) || "ssn".equals(kind) || "iban".equals(kind)
+                || "mrz".equals(kind);
     }
 
     private final StructuredDataScanner scanner = new StructuredDataScanner();
@@ -85,6 +90,13 @@ public final class SensitiveContentPolicy {
             return PolicyVerdict.suppress(r.suppressScore, cats, "suppress_package:" + packageName);
         }
 
+        // Gallery / image-viewer block: no collection at all while browsing stored photos.
+        if (packageName != null && r.blockPackages.contains(packageName)) {
+            Set<String> cats = new LinkedHashSet<>();
+            cats.add("gallery");
+            return PolicyVerdict.suppress(r.suppressScore, cats, "block_package:" + packageName);
+        }
+
         if (text == null) text = "";
 
         // Structural pass (on raw text - checksums are digit-based, dashes matter for SSN).
@@ -94,14 +106,24 @@ public final class SensitiveContentPolicy {
         String lower = text.toLowerCase();
         List<AhoCorasickMatcher.Match> keywordMatches = r.matcher.findMatches(lower);
 
-        // Aggregate.
+        // Aggregate. Context-required findings (ambiguous shapes like bare gov-ID tokens) only
+        // count when a same-category keyword occurs within the proximity window; unvalidated
+        // candidates are dropped so they contribute neither score nor redaction spans.
+        List<StructuredDataScanner.Finding> countedFindings = new ArrayList<>();
         Set<String> structuralCats = new LinkedHashSet<>();
         boolean hasStrongStructural = false;
         boolean hasWeakStructural = false;
         for (StructuredDataScanner.Finding f : findings) {
+            if (f.contextRequired) {
+                if (!hasNearbyKeyword(f, keywordMatches)) continue;
+                hasWeakStructural = true;
+            } else if (isStrongKind(f.kind)) {
+                hasStrongStructural = true;
+            } else {
+                hasWeakStructural = true;
+            }
+            countedFindings.add(f);
             structuralCats.add(f.category);
-            if (isStrongKind(f.kind)) hasStrongStructural = true;
-            else hasWeakStructural = true;
         }
 
         Set<String> keywordCats = new LinkedHashSet<>();
@@ -128,7 +150,7 @@ public final class SensitiveContentPolicy {
         if (hasWeakStructural) {
             score += W_STRUCTURED_WEAK; // partial; needs corroboration to suppress
         }
-        if (!findings.isEmpty()) {
+        if (!countedFindings.isEmpty()) {
             firedCats.addAll(structuralCats);
         }
         // Distinct keyword contributions.
@@ -158,10 +180,28 @@ public final class SensitiveContentPolicy {
             return PolicyVerdict.suppress(score, firedCats, "suppress:" + reasonOf(firedCats));
         }
         if (score >= r.redactScore) {
-            List<PolicyVerdict.Span> spans = buildRedactionSpans(findings, keywordMatches);
+            List<PolicyVerdict.Span> spans = buildRedactionSpans(countedFindings, keywordMatches);
             return PolicyVerdict.redact(score, firedCats, spans);
         }
         return PolicyVerdict.allow();
+    }
+
+    /**
+     * True if a keyword match of the same category as {@code f} lies within
+     * {@link #CONTEXT_PROXIMITY_CHARS} characters of the finding's span. Keyword match spans are
+     * in the lowercased copy, whose indices align 1:1 with the raw text used for findings.
+     */
+    private static boolean hasNearbyKeyword(StructuredDataScanner.Finding f,
+                                            List<AhoCorasickMatcher.Match> keywordMatches) {
+        for (AhoCorasickMatcher.Match m : keywordMatches) {
+            if (!m.category.equals(f.category)) continue;
+            int gap;
+            if (m.end <= f.start) gap = f.start - m.end;
+            else if (f.end <= m.start) gap = m.start - f.end;
+            else gap = 0; // overlapping
+            if (gap <= CONTEXT_PROXIMITY_CHARS) return true;
+        }
+        return false;
     }
 
     /**
@@ -175,6 +215,11 @@ public final class SensitiveContentPolicy {
             Set<String> cats = new LinkedHashSet<>();
             cats.add("package");
             return PolicyVerdict.suppress(r.suppressScore, cats, "suppress_package:" + packageName);
+        }
+        if (packageName != null && r.blockPackages.contains(packageName)) {
+            Set<String> cats = new LinkedHashSet<>();
+            cats.add("gallery");
+            return PolicyVerdict.suppress(r.suppressScore, cats, "block_package:" + packageName);
         }
         return PolicyVerdict.allow();
     }

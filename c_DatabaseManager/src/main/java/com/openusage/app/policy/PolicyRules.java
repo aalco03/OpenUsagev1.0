@@ -24,6 +24,8 @@ public final class PolicyRules {
 
     // Tier 1: unconditionally suppress capture for these packages.
     public final Set<String> suppressPackages;
+    // Photo galleries / image viewers: block ALL collection (text + capture) at the early gates.
+    public final Set<String> blockPackages;
     // Tier 2: media/entertainment packages that skip OCR (capture-direct).
     public final Set<String> mediaPackages;
 
@@ -43,6 +45,7 @@ public final class PolicyRules {
         this.keywords = Collections.unmodifiableMap(b.keywords);
         this.domains = Collections.unmodifiableSet(b.domains);
         this.suppressPackages = Collections.unmodifiableSet(b.suppressPackages);
+        this.blockPackages = Collections.unmodifiableSet(b.blockPackages);
         this.mediaPackages = Collections.unmodifiableSet(b.mediaPackages);
         this.suppressScore = b.suppressScore;
         this.redactScore = b.redactScore;
@@ -65,13 +68,15 @@ public final class PolicyRules {
 
     /** True if there are no rules to act on (empty dictionary and no package lists). */
     public boolean isEmpty() {
-        return matcher.isEmpty() && suppressPackages.isEmpty() && mediaPackages.isEmpty();
+        return matcher.isEmpty() && suppressPackages.isEmpty()
+                && blockPackages.isEmpty() && mediaPackages.isEmpty();
     }
 
     public static final class Builder {
         private final Map<String, Set<String>> keywords = new LinkedHashMap<>();
         private final Set<String> domains = new HashSet<>();
         private final Set<String> suppressPackages = new HashSet<>();
+        private final Set<String> blockPackages = new HashSet<>();
         private final Set<String> mediaPackages = new HashSet<>();
         private double suppressScore = 1.0;
         private double redactScore = 0.5;
@@ -102,6 +107,11 @@ public final class PolicyRules {
 
         public Builder addSuppressPackages(List<String> pkgs) {
             if (pkgs != null) for (String p : pkgs) if (p != null && !p.trim().isEmpty()) suppressPackages.add(p.trim());
+            return this;
+        }
+
+        public Builder addBlockPackages(List<String> pkgs) {
+            if (pkgs != null) for (String p : pkgs) if (p != null && !p.trim().isEmpty()) blockPackages.add(p.trim());
             return this;
         }
 

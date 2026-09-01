@@ -42,6 +42,30 @@ public class SensitiveContentPolicyTest {
     }
 
     @Test
+    public void blocks_galleryPackage_text() {
+        // Gallery/photo viewers must be blocked entirely at Gate 1, regardless of content.
+        PolicyVerdict v = policy.evaluateText("just some photo captions", "com.google.android.apps.photos");
+        assertTrue(v.isSuppress());
+        assertTrue(v.reason.startsWith("block_package:"));
+        assertTrue(v.categories.contains("gallery"));
+    }
+
+    @Test
+    public void blocks_galleryPackage_capture() {
+        // Gate 2 capture check must also suppress gallery packages (no screenshot).
+        PolicyVerdict v = policy.evaluateCapture("com.sec.android.gallery3d");
+        assertTrue(v.isSuppress());
+        assertTrue(v.reason.startsWith("block_package:"));
+    }
+
+    @Test
+    public void allows_nonGalleryPackage_capture() {
+        // A non-blocked, non-suppress package passes the capture gate (content judged later).
+        PolicyVerdict v = policy.evaluateCapture("com.example.reader");
+        assertTrue(v.isAllow());
+    }
+
+    @Test
     public void allows_benignNewsArticleAboutCreditCards() {
         // A news article mentioning "credit limit" once, no structural data => should not suppress.
         String article = "The bank announced changes to how a credit limit is calculated for new customers.";
@@ -71,6 +95,50 @@ public class SensitiveContentPolicyTest {
         String redacted = SensitiveContentPolicy.applyRedaction(text, v.spans);
         assertFalse(redacted.contains("123-45-6789"));
         assertTrue(redacted.contains("[REDACTED:financial]"));
+    }
+
+    // ── DRA identifier expansion ──────────────────────────
+
+    @Test
+    public void suppresses_passportNumberWithKeyword() {
+        PolicyVerdict v = policy.evaluateText(
+                "Passport number: X1234567 issued 2020", "com.example.travel");
+        assertTrue(v.isSuppress());
+        assertTrue(v.categories.contains(PolicyCategories.IDENTITY));
+    }
+
+    @Test
+    public void allows_govIdTokenWithoutKeyword() {
+        // A gov-ID-shaped token with no nearby identity keyword must not suppress.
+        PolicyVerdict v = policy.evaluateText("Order X1234567 shipped today", "com.example.shop");
+        assertTrue(v.isAllow());
+    }
+
+    @Test
+    public void suppresses_spaceSeparatedSsn() {
+        PolicyVerdict v = policy.evaluateText("Employee SSN 123 45 6789 on file", "com.example.hr");
+        assertTrue(v.isSuppress());
+    }
+
+    @Test
+    public void suppresses_bareSsnWithKeyword() {
+        PolicyVerdict v = policy.evaluateText(
+                "Social security number 123456789 verified", "com.example.hr");
+        assertTrue(v.isSuppress());
+    }
+
+    @Test
+    public void allows_bareNineDigitsWithoutKeyword() {
+        PolicyVerdict v = policy.evaluateText("Reference id 123456789 processed", "com.example.app");
+        assertTrue(v.isAllow());
+    }
+
+    @Test
+    public void phiIdentifiers_crossRedactBand() {
+        // Multiple PHI/health keywords should at least redact (keyword-only, no structural hit).
+        PolicyVerdict v = policy.evaluateText(
+                "Patient diagnosis noted; medical record number assigned", "com.example.health");
+        assertFalse("PHI identifiers should not be allowed outright", v.isAllow());
     }
 
     @Test

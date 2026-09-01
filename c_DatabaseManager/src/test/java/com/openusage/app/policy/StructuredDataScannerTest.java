@@ -81,6 +81,42 @@ public class StructuredDataScannerTest {
         assertTrue(hasKind(f, "dosage"));
     }
 
+    // ── New DRA identifier detectors ──────────────────────
+
+    @Test
+    public void detects_spaceSeparatedSsn() {
+        List<StructuredDataScanner.Finding> f = scanner.scan("SSN 123 45 6789 filed");
+        assertTrue(hasKind(f, "ssn"));
+    }
+
+    @Test
+    public void detects_passportMrz() {
+        List<StructuredDataScanner.Finding> f =
+                scanner.scan("P<USASMITH<<JOHN<<<<<<<<<<<<<<<<<<<<<<<<<<<");
+        assertTrue(hasKind(f, "mrz"));
+    }
+
+    @Test
+    public void detects_govIdToken_asContextRequired() {
+        List<StructuredDataScanner.Finding> f = scanner.scan("License X1234567 issued");
+        assertTrue(hasKind(f, "govid"));
+        for (StructuredDataScanner.Finding fd : f) {
+            if (fd.kind.equals("govid")) assertTrue(fd.contextRequired);
+        }
+    }
+
+    @Test
+    public void bareNineDigits_emitContextRequiredSsn() {
+        List<StructuredDataScanner.Finding> f = scanner.scan("ref 123456789 end");
+        assertTrue(hasKind(f, "ssn_bare"));
+    }
+
+    @Test
+    public void ignores_pureWordAsGovId() {
+        List<StructuredDataScanner.Finding> f = scanner.scan("hello world message");
+        assertFalse(hasKind(f, "govid"));
+    }
+
     @Test
     public void ignores_nonLuhnTrackingNumber() {
         // UPS-style 18-digit tracking number that is NOT Luhn-valid must not be flagged as a card.
