@@ -1,5 +1,7 @@
 package com.openusage.app.screenshots;
 
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
@@ -39,6 +41,12 @@ import com.openusage.app.TextBasedEventData.HashMapPool;
 import com.openusage.app.TextBasedEventData.EventDatabaseHelper;
 import com.openusage.app.modulemanager.ModuleCharacteristics;
 import com.openusage.app.modulemanager.ModuleController;
+import com.openusage.app.policy.OcrClassifier;
+import com.openusage.app.policy.PolicyAuditLogger;
+import com.openusage.app.policy.PolicyConfigManager;
+import com.openusage.app.policy.PolicyVerdict;
+import com.openusage.app.policy.RiskTierRouter;
+import com.openusage.app.policy.SensitiveContentPolicy;
 
 public class ScreenshotCapture {
 
@@ -64,6 +72,20 @@ public class ScreenshotCapture {
     private static final int REGULAR_SCREENSHOT_QUALITY = 85; // High quality for regular screenshots
     private static final int FALLBACK_SCREENSHOT_QUALITY = 45; // Lower quality for LLM processing
     public boolean isFallbackScreenshot = false; // Flag set when triggered by fallback
+
+    // Foreground package for the pending capture (set by the fallback receiver). Used by the
+    // Gate 2 package re-check and the Gate 3 risk-tier router.
+    public String currentPackage = null;
+    // Whether the triggering context carried a sensitive signal (forces Tier 3 in the router).
+    public boolean lastTriggerHadSensitiveSignal = false;
+
+    // Sensitive-content policy (Gate 2 package re-check + Gate 3 tier routing / OCR)
+    private SensitiveContentPolicy sensitivePolicy;
+    private RiskTierRouter riskTierRouter;
+    private OcrClassifier ocrClassifier;
+
+    // Directory (under storeDirName) where Tier-3 frames are quarantined for deferred OCR.
+    private static final String QUARANTINE_DIR = "quarantine";
 
 
     String ScreenShotTakenTime;
@@ -144,6 +166,11 @@ public class ScreenshotCapture {
 
         eventOperationManager = EventOperationManager.getInstance(context);
         moduleCharacteristics = ModuleCharacteristics.getInstance();
+
+        // Sensitive-content policy: Gate 2 (package re-check) + Gate 3 (tier routing / OCR).
+        this.sensitivePolicy = PolicyConfigManager.getInstance(context).getPolicy();
+        this.riskTierRouter = new RiskTierRouter(context, sensitivePolicy);
+        this.ocrClassifier = new OcrClassifier(sensitivePolicy);
     }
 
     public void StartNewThreadToCapture(){
@@ -397,6 +424,23 @@ public class ScreenshotCapture {
             // Don't screenshot if the kill switch is active.
             if (KillSwitch == 1) return;
 
+            // Opportunistically process any quarantined Tier-3 frames (Mode B, throttled).
+            processQuarantine();
+
+            // ========== GATE 2: capture-time package suppression (authoritative) ==========
+            // This is the capture choke point: it catches ALL senders of the capture broadcast,
+            // closing the trigger->capture race where the user switches into a sensitive app.
+            String fgPackage = resolveForegroundPackage();
+            if (sensitivePolicy != null) {
+                PolicyVerdict captureVerdict = sensitivePolicy.evaluateCapture(fgPackage);
+                if (captureVerdict.isSuppress()) {
+                    PolicyAuditLogger.log(context, "capture", fgPackage, captureVerdict);
+                    Log.i(TAG, "Gate 2 SUPPRESS - skipping capture for " + fgPackage);
+                    isFallbackScreenshot = false;
+                    return;
+                }
+            }
+
             // Make sure there's a sufficient amount of space.
             if (!hasEnoughSpaceForScreenshot())
             {
@@ -509,6 +553,51 @@ public class ScreenshotCapture {
                 EventOperationManager.getInstance(context).addEvent(moduleCharacteristics.getScreenshotFailureCharacteristics(), screenshotMap);
             }
 
+            // ========== GATE 3: post-capture, pre-persist ==========
+            // Black-frame check + risk-tier routing + (Tier-3) OCR escalation, all on the
+            // in-memory bitmap before anything touches disk.
+            if (bitmap != null && sensitivePolicy != null) {
+                // 1. Black-frame check: FLAG_SECURE apps yield blank frames.
+                if (isBlankFrame(bitmap)) {
+                    Log.i(TAG, "Gate 3 - blank frame (FLAG_SECURE), discarding");
+                    logPolicyEvent("flag_secure_blank", fgPackage, "SUPPRESS", "flag_secure_blank");
+                    bitmap.recycle();
+                    isFallbackScreenshot = false;
+                    return;
+                }
+
+                // 2. Risk-tier router: decide whether OCR is warranted at all.
+                RiskTierRouter.Tier tier = riskTierRouter.route(fgPackage, lastTriggerHadSensitiveSignal);
+                boolean ocrEnabled = sensitivePolicy.getRules() != null
+                        && sensitivePolicy.getRules().ocrEscalationEnabled;
+
+                if (tier == RiskTierRouter.Tier.TIER_1_SUPPRESS) {
+                    logPolicyEvent("bitmap", fgPackage, "SUPPRESS", "tier1_suppress");
+                    bitmap.recycle();
+                    isFallbackScreenshot = false;
+                    return;
+                } else if (tier == RiskTierRouter.Tier.TIER_3_OCR && ocrEnabled) {
+                    String fallbackMode = sensitivePolicy.getRules().fallbackMode;
+                    if ("quarantine".equalsIgnoreCase(fallbackMode)) {
+                        // Mode B: persist to quarantine dir for deferred, off-foreground OCR.
+                        quarantineBitmap(bitmap, name, fgPackage);
+                        bitmap.recycle();
+                        isFallbackScreenshot = false;
+                        return;
+                    } else {
+                        // Mode A: inline OCR on this capture thread (background), suppress if sensitive.
+                        PolicyVerdict ocrVerdict = ocrClassifier.classify(bitmap, fgPackage);
+                        if (!ocrVerdict.isAllow()) {
+                            PolicyAuditLogger.log(context, "bitmap", fgPackage, ocrVerdict);
+                            Log.i(TAG, "Gate 3 OCR SUPPRESS for " + fgPackage + " (" + ocrVerdict.reason + ")");
+                            bitmap.recycle();
+                            isFallbackScreenshot = false;
+                            return;
+                        }
+                    }
+                }
+                // Tier 2 (media, capture-direct) and Tier 3 that passed OCR fall through to persist.
+            }
 
             // Create an output stream for the JPEG and write it to the file.
             try
@@ -630,6 +719,165 @@ public class ScreenshotCapture {
             context.sendBroadcast(broadcast);
         }
 
+    }
+
+    /**
+     * Resolves the foreground package for the pending capture. Prefers the package supplied by
+     * the fallback trigger, then falls back to a fresh UsageStatsManager query (authoritative at
+     * capture time, guarding the trigger->capture race).
+     */
+    private String resolveForegroundPackage() {
+        if (currentPackage != null && !currentPackage.isEmpty()) {
+            return currentPackage;
+        }
+        try {
+            UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+            if (usm == null) return null;
+            long now = System.currentTimeMillis();
+            java.util.List<UsageStats> stats = usm.queryUsageStats(
+                    UsageStatsManager.INTERVAL_DAILY, now - 1000 * 10, now);
+            if (stats == null || stats.isEmpty()) return null;
+            UsageStats recent = null;
+            for (UsageStats s : stats) {
+                if (recent == null || s.getLastTimeUsed() > recent.getLastTimeUsed()) {
+                    recent = s;
+                }
+            }
+            return recent != null ? recent.getPackageName() : null;
+        } catch (Exception e) {
+            Log.w(TAG, "resolveForegroundPackage failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Sparse black-frame detector: samples a 16x16 grid and reports blank if pixel variance is
+     * effectively zero (as produced by FLAG_SECURE surfaces). ~1 ms.
+     */
+    private boolean isBlankFrame(Bitmap bitmap) {
+        try {
+            int w = bitmap.getWidth();
+            int h = bitmap.getHeight();
+            if (w <= 0 || h <= 0) return true;
+            int grid = 16;
+            int first = bitmap.getPixel(0, 0);
+            for (int gy = 0; gy < grid; gy++) {
+                for (int gx = 0; gx < grid; gx++) {
+                    int x = Math.min(w - 1, gx * w / grid);
+                    int y = Math.min(h - 1, gy * h / grid);
+                    if (bitmap.getPixel(x, y) != first) {
+                        return false; // found variance -> not blank
+                    }
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            return false; // never discard on detector error
+        }
+    }
+
+    /**
+     * Mode B: writes a Tier-3 frame to the quarantine subdirectory for deferred OCR classification.
+     * Quarantined files are NOT inserted into the DB and NOT broadcast, so the uploader never
+     * stages them. {@link #processQuarantine()} classifies them off the foreground later.
+     */
+    private void quarantineBitmap(Bitmap bitmap, String name, String fgPackage) {
+        try {
+            File qdir = new File(storeDirName, QUARANTINE_DIR);
+            if (!qdir.exists()) qdir.mkdirs();
+            File out = new File(qdir, name + "__" + (fgPackage != null ? fgPackage : "unknown") + ".jpg");
+            FileOutputStream fos = new FileOutputStream(out);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, FALLBACK_SCREENSHOT_QUALITY, fos);
+            fos.close();
+            logPolicyEvent("quarantine", fgPackage, "QUARANTINE", "deferred_ocr");
+            Log.i(TAG, "Gate 3 - quarantined frame for deferred OCR: " + out.getName());
+        } catch (Exception e) {
+            Log.e(TAG, "quarantineBitmap failed: " + e.getMessage());
+        }
+    }
+
+    /** Emits a policy audit event directly (used where no PolicyVerdict object is available). */
+    private void logPolicyEvent(String gate, String pkg, String decision, String reason) {
+        try {
+            HashMap<String, String> map = HashMapPool.getMap();
+            map.put("gate", gate);
+            map.put("decision", decision);
+            map.put("reason", reason);
+            map.put("package", pkg != null ? pkg : "");
+            EventOperationManager.getInstance(context)
+                    .addEvent(moduleCharacteristics.getPolicySuppressionCharacteristics(), map);
+            HashMapPool.releaseMap(map);
+        } catch (Exception e) {
+            Log.e(TAG, "logPolicyEvent failed: " + e.getMessage());
+        }
+    }
+
+    // Throttle for deferred quarantine processing (Mode B).
+    private long lastQuarantineSweepMillis = 0;
+    private static final long QUARANTINE_SWEEP_INTERVAL_MS = 2 * 60 * 1000; // 2 min
+
+    /**
+     * Deferred (Mode B) classification of quarantined Tier-3 frames. For each file: OCR-classify;
+     * if the policy flags it, delete it; otherwise promote it into the normal store directory,
+     * insert a DB record, and broadcast so the accessibility service extracts its text.
+     *
+     * <p>Runs on the capture background thread; near-zero cost when the quarantine dir is empty.
+     * Throttled to at most once per {@link #QUARANTINE_SWEEP_INTERVAL_MS}.
+     */
+    private void processQuarantine() {
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastQuarantineSweepMillis < QUARANTINE_SWEEP_INTERVAL_MS) return;
+        lastQuarantineSweepMillis = now;
+
+        try {
+            File qdir = new File(storeDirName, QUARANTINE_DIR);
+            File[] files = qdir.listFiles();
+            if (files == null || files.length == 0) return;
+
+            for (File f : files) {
+                Bitmap bmp = null;
+                try {
+                    String fname = f.getName();
+                    String pkg = "unknown";
+                    int sep = fname.indexOf("__");
+                    if (sep >= 0) {
+                        pkg = fname.substring(sep + 2).replace(".jpg", "");
+                    }
+
+                    bmp = android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath());
+                    if (bmp == null) { f.delete(); continue; }
+
+                    PolicyVerdict verdict = ocrClassifier.classify(bmp, pkg);
+                    if (!verdict.isAllow()) {
+                        PolicyAuditLogger.log(context, "quarantine", pkg, verdict);
+                        f.delete();
+                        Log.i(TAG, "Quarantine: suppressed & deleted " + fname);
+                    } else {
+                        // Promote clean frame into the normal store.
+                        String cleanName = (sep >= 0 ? fname.substring(0, sep) : fname.replace(".jpg", ""));
+                        File dest = new File(storeDirName, cleanName + ".jpg");
+                        if (f.renameTo(dest)) {
+                            long fileSize = dest.length();
+                            long ts = System.currentTimeMillis();
+                            dbHelper.insertScreenshot(currentSessionId, cleanName + ".jpg",
+                                    dest.getAbsolutePath(), ts, fileSize);
+                            Intent broadcast = new Intent(ACTION_SCREENSHOT);
+                            broadcast.putExtra("directory", storeDirName + "/");
+                            broadcast.putExtra("name", cleanName);
+                            broadcast.putExtra("write-text-contents", true);
+                            context.sendBroadcast(broadcast);
+                            Log.i(TAG, "Quarantine: promoted clean frame " + cleanName);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "processQuarantine item failed: " + e.getMessage());
+                } finally {
+                    if (bmp != null) bmp.recycle();
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "processQuarantine failed: " + e.getMessage());
+        }
     }
 
     private boolean scheduleGrabScreen()

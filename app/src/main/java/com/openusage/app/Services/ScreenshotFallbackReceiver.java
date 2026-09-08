@@ -109,6 +109,10 @@ public class ScreenshotFallbackReceiver {
             // Set session context for screenshot database linkage
             screenshotCapture.currentSessionId = sessionId;
             screenshotCapture.isFallbackScreenshot = true;
+            // Provide the triggering package so Gate 2/Gate 3 can re-check it at capture time.
+            screenshotCapture.currentPackage = appPackage;
+            screenshotCapture.lastTriggerHadSensitiveSignal =
+                    intent.getBooleanExtra("had_sensitive_signal", false);
 
             // Force immediate screenshot capture
             if (screenshotCapture.handler != null && screenshotCapture.screengrabber != null) {

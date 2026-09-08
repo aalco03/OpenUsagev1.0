@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-only manifest additions. Merged into debug builds only; nothing here reaches a
+    release APK, and the receiver class itself lives in src/debug so it is not even compiled
+    into release.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <!--
+            adb-triggerable policy self-test. Exported so `adb shell am broadcast` (shell uid)
+            can reach it; harmless because it only runs synthetic cases through the policy and
+            writes an app-private JSONL file.
+        -->
+        <receiver
+            android:name="com.openusage.app.policy.PolicySelfTestReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="com.openusage.app.POLICY_SELFTEST" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>
