@@ -31,7 +31,9 @@ import com.openusage.app.TextBasedEventData.TextSimilarityCalculator;
 import com.openusage.app.TextBasedEventData.UITextExtractionManager;
 import com.openusage.app.policy.PolicyAuditLogger;
 import com.openusage.app.policy.PolicyConfigManager;
+import com.openusage.app.policy.PolicyDiagnosticWriter;
 import com.openusage.app.policy.PolicyDumpWriter;
+import com.openusage.app.policy.PolicyEvaluationTrace;
 import com.openusage.app.policy.PolicyVerdict;
 import com.openusage.app.policy.SensitiveContentPolicy;
 
@@ -253,7 +255,14 @@ public class ScreenomicsAccessService extends AccessibilityService {
             }
             
             Log.d(TAG, "Active window found - extracting text...");
-            
+
+            // Mark the throttle as soon as we commit to walking the tree. This previously lived
+            // at the end of the method, inside the storage-success branch, so every early exit
+            // (Gate 1 suppress, similarity dedup, too-short text) left it stale - and the 5s
+            // rate limit above then compared against an old timestamp and let redundant
+            // extractions straight through.
+            lastExtractionTime = currentTime;
+
             // Extract text from the UI hierarchy
             String extractedText = extractTextFromNode(currentRoot);
             
@@ -272,9 +281,27 @@ public class ScreenomicsAccessService extends AccessibilityService {
                     PolicyDumpWriter.append(this, policyPackage, extractedText);
                 }
 
+                // Debug-only: attach a diagnostic trace. Passing null (the production path)
+                // is byte-for-byte the previous 3-arg call, so live behavior is unchanged.
+                PolicyEvaluationTrace diagTrace = null;
+                if (com.openusage.app.BuildConfig.DEBUG
+                        && PolicyDiagnosticWriter.shouldRecord(policyPackage)) {
+                    diagTrace = new PolicyEvaluationTrace();
+                }
+
                 PolicyVerdict verdict = sensitivePolicy.evaluateText(
-                        extractedText, policyPackage, lastEvalContext);
+                        extractedText, policyPackage, lastEvalContext, diagTrace);
                 lastPolicyVerdict = verdict;
+
+                if (diagTrace != null) {
+                    // Never let a diagnostic failure disturb capture behavior.
+                    try {
+                        PolicyDiagnosticWriter.record(this, PolicyDiagnosticWriter.PASSIVE_FILE,
+                                "text", "accessibility", policyPackage, verdict, diagTrace);
+                    } catch (Throwable t) {
+                        Log.e(TAG, "policy diagnostic record failed: " + t.getMessage());
+                    }
+                }
 
                 if (verdict.isSuppress()) {
                     PolicyAuditLogger.log(this, "text", policyPackage, verdict);
@@ -369,8 +396,7 @@ public class ScreenomicsAccessService extends AccessibilityService {
                 }
                 
                 lastExtractedText = extractedText;
-                lastExtractionTime = currentTime;
-                
+
             } else if (extractedText != null && similarity >= SIMILARITY_THRESHOLD) {
                 Log.d(TAG, String.format("Text highly similar to previous (%.2f >= %.2f) - skipping duplicate storage",
                       similarity, SIMILARITY_THRESHOLD));
@@ -662,6 +688,29 @@ public class ScreenomicsAccessService extends AccessibilityService {
     }
     
     /**
+     * Debug-only diagnostic record for the package-level gates, which have no extracted text -
+     * only the decision is meaningful. No-op in release and whenever passive capture is off.
+     * Fully guarded: a diagnostic failure must never alter capture behavior.
+     */
+    private void recordGateDiagnostic(String gate, String appPackage, PolicyVerdict verdict) {
+        if (!com.openusage.app.BuildConfig.DEBUG || verdict == null) return;
+        if (!PolicyDiagnosticWriter.shouldRecord(appPackage)) return;
+        try {
+            PolicyEvaluationTrace trace = new PolicyEvaluationTrace();
+            trace.text = "";
+            trace.length = 0;
+            trace.total = verdict.score;
+            trace.decision = verdict.decision.name();
+            trace.reason = verdict.reason;
+            trace.categoriesFired.addAll(verdict.categories);
+            PolicyDiagnosticWriter.record(this, PolicyDiagnosticWriter.PASSIVE_FILE,
+                    gate, "accessibility", appPackage, verdict, trace);
+        } catch (Throwable t) {
+            Log.e(TAG, "policy gate diagnostic failed: " + t.getMessage());
+        }
+    }
+
+    /**
      * Trigger fallback screenshot via broadcast
      */
     private void triggerFallbackScreenshot(String reason, String appPackage, String sessionId) {
@@ -678,12 +727,14 @@ public class ScreenomicsAccessService extends AccessibilityService {
         if (sensitivePolicy != null) {
             if (lastPolicyVerdict != null && !lastPolicyVerdict.isAllow()) {
                 PolicyAuditLogger.log(this, "trigger", appPackage, lastPolicyVerdict);
+                recordGateDiagnostic("trigger", appPackage, lastPolicyVerdict);
                 Log.i(TAG, "Fallback screenshot vetoed by policy (" + lastPolicyVerdict.reason + ")");
                 return;
             }
             PolicyVerdict captureVerdict = sensitivePolicy.evaluateCapture(appPackage);
             if (captureVerdict.isSuppress()) {
                 PolicyAuditLogger.log(this, "trigger", appPackage, captureVerdict);
+                recordGateDiagnostic("capture", appPackage, captureVerdict);
                 Log.i(TAG, "Fallback screenshot vetoed - suppressed package " + appPackage);
                 return;
             }

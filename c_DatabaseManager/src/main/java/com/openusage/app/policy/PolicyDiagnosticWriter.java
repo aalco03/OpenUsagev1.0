@@ -41,15 +41,16 @@ public final class PolicyDiagnosticWriter {
      * Flip to true on a researcher's own debug device to record live evaluations.
      * Leave false for anything resembling a participant build.
      */
-    public static final boolean PASSIVE_ENABLED = false;
+    public static final boolean PASSIVE_ENABLED = true;
 
     /**
      * Optional allowlist scoping passive capture to specific packages (empty = all packages).
      * Prefer scoping to the one or two highest-risk apps rather than recording everything.
      */
     public static final Set<String> PASSIVE_PACKAGES = Collections.unmodifiableSet(
-            new HashSet<>(Arrays.<String>asList(
-                    // e.g. "com.example.patientportal"
+            new HashSet<>(Arrays.asList(
+                    "com.android.chrome",
+                    "com.google.android.gm"
             )));
 
     private PolicyDiagnosticWriter() {}
