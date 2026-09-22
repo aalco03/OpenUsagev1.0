@@ -76,10 +76,33 @@ The 30-minute and 4-hour alarms provide additional safety nets if the 2-minute c
 
 On device boot, `AutostartService` starts the service and sets up all three alarms immediately.
 
+### Coverage Over Time
 
-### [INSERT DIAGRAM HERE]
+Each layer has a weakness that another layer covers, so the safety net never drops to zero. The overlaps where one layer hands off to the next are the synergy made visible.
 
-A visual representation of the three layers and how they interact would go here.
+```
+  FAILURE OCCURS
+       |
+       v
+  time  0s        30s        2min       30min        4hr        REBOOT
+  ------|----------|----------|----------|------------|----------|-------->
+
+  L1  [############]                                              START_STICKY
+      [ instant   ]X  <- fails under memory pressure
+                   :
+                   :  (handoff)
+                   v
+  L2            [###############################################]  AlarmManager
+                [ 2-min heartbeat -> 30-min retry -> 4-hr restart ]X <- dies on reboot
+                                                                  :
+                                                                  : (handoff)
+                                                                  v
+  L3                                                           [#########]  Boot
+                                                               [ re-arms  ]  Auto-Start
+                                                               [ L1 + L2  ]
+
+  =========== continuous coverage, no gap ===========>
+```
 
 ---
 
