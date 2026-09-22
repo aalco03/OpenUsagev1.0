@@ -158,8 +158,6 @@ The receiver primarily **checks and notifies** rather than directly restarting s
 
 ## 6. Failure Scenarios and Recovery
 
-> **Note:** The ASCII timelines will be replaced with visual diagrams.
-
 ### Scenario 1: Service Killed by Android
 
 This is the most common failure. Under memory pressure, Android terminates `CaptureUploadService` to reclaim resources. Because the service returns `START_STICKY`, the OS attempts an automatic restart almost immediately, and in most cases collection resumes with no user intervention. The alarm layers exist as a safety net: if `START_STICKY` fails to bring the service back, the 2-minute heartbeat detects the outage and notifies the user, while the 30-minute and 4-hour alarms make escalating restart attempts.
