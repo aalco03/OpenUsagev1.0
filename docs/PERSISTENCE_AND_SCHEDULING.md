@@ -164,59 +164,19 @@ The receiver primarily **checks and notifies** rather than directly restarting s
 
 This is the most common failure. Under memory pressure, Android terminates `CaptureUploadService` to reclaim resources. Because the service returns `START_STICKY`, the OS attempts an automatic restart almost immediately, and in most cases collection resumes with no user intervention. The alarm layers exist as a safety net: if `START_STICKY` fails to bring the service back, the 2-minute heartbeat detects the outage and notifies the user, while the 30-minute and 4-hour alarms make escalating restart attempts.
 
-```
-   [Android kills CaptureUploadService.      [30-min alarm fires: if service still
-    START_STICKY requests an automatic        down, calls StartTheService() which
-    restart of the service.]                  launches CaptureUploadStarter, then
-         |                                     reschedules itself for 30 more min.]
-         |                                          |
-=====T=0min==============T=2min===============T=32min================T=4hours=====
-                            |                                            |
-                            |                                            |
-              [2-min heartbeat fires:                     [4-hour alarm fires: if
-               BroadcastReceiverForAlarm                   ScreenMonitorService is down,
-               checks services. If down,                   attemptServiceRestart() starts
-               notifies "Screen capture                    it directly, then reschedules
-               is paused..."]                              itself for 4 more hours.]
-```
+![Failure Scenario 1: Service Killed by Android](../OpenUsageFailureScenario1TL.png)
 
 ### Scenario 2: Device Reboots
 
 On reboot, no service survives, so recovery depends entirely on the boot receiver. `AutostartService` fires on `BOOT_COMPLETED`, validates that the user is logged in, is not in the PASSIVE study group, and has not manually disabled tracking. If all checks pass, it starts `ScreenMonitorService`, launches the screenshot-permission flow via `CaptureUploadStarter`, and arms all three alarms. From that point on, the standard heartbeat/re-engagement cycle takes over.
 
-```
-   [AutostartService fires on BOOT_COMPLETED.     [2-min heartbeat fires: confirms
-    Validates login, study group, and tracking     both services are up. If not,
-    prefs. Starts ScreenMonitorService and          notifies the user. If healthy,
-    arms all three alarms.]                          cancels the heartbeat alarm.]
-         |                                                |
-=====T=0sec==============T=0-30sec================T=2min=================T=4hours=====
-                            |                                              |
-                            |                                              |
-              [Screenshot-permission dialog                  [4-hour alarm fires:
-               shown via CaptureUploadStarter.                restarts ScreenMonitorService
-               User grants or denies; ScreenMonitor          if it is down. Reschedules
-               keeps collecting text data either way.]        itself for 4 more hours.]
-```
+![Failure Scenario 2: Device Reboots](../OpenUsageFailureScenario2TL.png)
 
 ### Scenario 3: User Explicitly Stops the App
 
 When the user swipes the app away or force-stops it, this is treated as an intentional action, so `START_STICKY` does **not** trigger a restart. The app deliberately does not fight the user here. Instead, the alarm layer surfaces reminders that collection has stopped, and only the longest (4-hour) alarm silently restarts the background text-collection service.
 
-```
-   [User swipes away / force-stops app.          [30-min alarm fires: launches
-    START_STICKY does NOT apply because           CaptureUploadStarter, which is a
-    this is an intentional user action.]          no-op unless the user interacts.
-         |                                         Reschedules itself.]
-         |                                              |
-=====T=0min==============T=2min===============T=32min================T=4hours=====
-                            |                                            |
-                            |                                            |
-              [2-min heartbeat fires: both              [4-hour alarm fires:
-               services down. Notifies "App is          ScreenMonitorService is
-               not running. Please reopen the            started silently in the
-               app to resume collection."]              background (no notification).]
-```
+![Failure Scenario 3: User Explicitly Stops the App](../OpenUsageFailureScenario3TL.png)
 
 ---
 
