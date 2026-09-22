@@ -164,19 +164,19 @@ The receiver primarily **checks and notifies** rather than directly restarting s
 
 This is the most common failure. Under memory pressure, Android terminates `CaptureUploadService` to reclaim resources. Because the service returns `START_STICKY`, the OS attempts an automatic restart almost immediately, and in most cases collection resumes with no user intervention. The alarm layers exist as a safety net: if `START_STICKY` fails to bring the service back, the 2-minute heartbeat detects the outage and notifies the user, while the 30-minute and 4-hour alarms make escalating restart attempts.
 
-![Failure Scenario 1: Service Killed by Android](../OpenUsageFailureScenario1TL.png)
+![Failure Scenario 1: Service Killed by Android](OpenUsageFailureScenario1TL.png)
 
 ### Scenario 2: Device Reboots
 
 On reboot, no service survives, so recovery depends entirely on the boot receiver. `AutostartService` fires on `BOOT_COMPLETED`, validates that the user is logged in, is not in the PASSIVE study group, and has not manually disabled tracking. If all checks pass, it starts `ScreenMonitorService`, launches the screenshot-permission flow via `CaptureUploadStarter`, and arms all three alarms. From that point on, the standard heartbeat/re-engagement cycle takes over.
 
-![Failure Scenario 2: Device Reboots](../OpenUsageFailureScenario2TL.png)
+![Failure Scenario 2: Device Reboots](OpenUsageFailureScenario2TL.png)
 
 ### Scenario 3: User Explicitly Stops the App
 
 When the user swipes the app away or force-stops it, this is treated as an intentional action, so `START_STICKY` does **not** trigger a restart. The app deliberately does not fight the user here. Instead, the alarm layer surfaces reminders that collection has stopped, and only the longest (4-hour) alarm silently restarts the background text-collection service.
 
-![Failure Scenario 3: User Explicitly Stops the App](../OpenUsageFailureScenario3TL.png)
+![Failure Scenario 3: User Explicitly Stops the App](OpenUsageFailureScenario3TL.png)
 
 ---
 
