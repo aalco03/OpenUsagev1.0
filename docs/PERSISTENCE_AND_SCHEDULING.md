@@ -76,10 +76,33 @@ The 30-minute and 4-hour alarms provide additional safety nets if the 2-minute c
 
 On device boot, `AutostartService` starts the service and sets up all three alarms immediately.
 
+### Coverage Over Time
 
-### [INSERT DIAGRAM HERE]
+Each layer has a weakness that another layer covers, so the safety net never drops to zero. The overlaps where one layer hands off to the next are the synergy made visible.
 
-A visual representation of the three layers and how they interact would go here.
+```
+  FAILURE OCCURS
+       |
+       v
+  time  0s        30s        2min       30min        4hr        REBOOT
+  ------|----------|----------|----------|------------|----------|-------->
+
+  L1  [############]                                              START_STICKY
+      [ instant   ]X  <- fails under memory pressure
+                   :
+                   :  (handoff)
+                   v
+  L2            [###############################################]  AlarmManager
+                [ 2-min heartbeat -> 30-min retry -> 4-hr restart ]X <- dies on reboot
+                                                                  :
+                                                                  : (handoff)
+                                                                  v
+  L3                                                           [#########]  Boot
+                                                               [ re-arms  ]  Auto-Start
+                                                               [ L1 + L2  ]
+
+  =========== continuous coverage, no gap ===========>
+```
 
 ---
 
@@ -164,19 +187,19 @@ The receiver primarily **checks and notifies** rather than directly restarting s
 
 This is the most common failure. Under memory pressure, Android terminates `CaptureUploadService` to reclaim resources. Because the service returns `START_STICKY`, the OS attempts an automatic restart almost immediately, and in most cases collection resumes with no user intervention. The alarm layers exist as a safety net: if `START_STICKY` fails to bring the service back, the 2-minute heartbeat detects the outage and notifies the user, while the 30-minute and 4-hour alarms make escalating restart attempts.
 
-![Failure Scenario 1: Service Killed by Android](../OpenUsageFailureScenario1TL.png)
+![Failure Scenario 1: Service Killed by Android](OpenUsageFailureScenario1TL.png)
 
 ### Scenario 2: Device Reboots
 
 On reboot, no service survives, so recovery depends entirely on the boot receiver. `AutostartService` fires on `BOOT_COMPLETED`, validates that the user is logged in, is not in the PASSIVE study group, and has not manually disabled tracking. If all checks pass, it starts `ScreenMonitorService`, launches the screenshot-permission flow via `CaptureUploadStarter`, and arms all three alarms. From that point on, the standard heartbeat/re-engagement cycle takes over.
 
-![Failure Scenario 2: Device Reboots](../OpenUsageFailureScenario2TL.png)
+![Failure Scenario 2: Device Reboots](OpenUsageFailureScenario2TL.png)
 
 ### Scenario 3: User Explicitly Stops the App
 
 When the user swipes the app away or force-stops it, this is treated as an intentional action, so `START_STICKY` does **not** trigger a restart. The app deliberately does not fight the user here. Instead, the alarm layer surfaces reminders that collection has stopped, and only the longest (4-hour) alarm silently restarts the background text-collection service.
 
-![Failure Scenario 3: User Explicitly Stops the App](../OpenUsageFailureScenario3TL.png)
+![Failure Scenario 3: User Explicitly Stops the App](OpenUsageFailureScenario3TL.png)
 
 ---
 
